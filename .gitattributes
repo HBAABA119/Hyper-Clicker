@@ -1,0 +1,8 @@
+# Normalise line endings in the repository; check out per-platform.
+* text=auto eol=lf
+
+# Windows-native binaries that must stay byte-identical.
+*.ico binary
+*.png binary
+*.msi binary
+*.exe binary

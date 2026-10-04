@@ -1,0 +1,65 @@
+name: Release
+
+# Pushing a tag like `v0.1.0` builds the Windows installers and publishes a
+# GitHub Release. The app's Settings > Updates panel reads that release, so the
+# download links on the website stay in step automatically.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test the engine before bundling
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Regenerate icons from source
+        run: |
+          python scripts/make_icons.py
+          python scripts/make_installer_images.py
+
+      # TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD are
+      # optional today (the app checks GitHub Releases for notes and download
+      # links). Add them as repository secrets to enable signed in-app binary
+      # updates; see README.
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "HyperClicker ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for the full list of changes."
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target x86_64-pc-windows-msvc

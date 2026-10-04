@@ -1,0 +1,12 @@
+node_modules
+dist
+website/node_modules
+website/.next
+website/out
+src-tauri/target
+src-tauri/gen
+.DS_Store
+*.log
+
+# Editor / tooling metadata
+.freebuff/
