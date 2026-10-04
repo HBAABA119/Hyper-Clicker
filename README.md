@@ -49,6 +49,37 @@ pnpm build            # static export into website/out
 
 ---
 
+## Releases and updates
+
+Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which tests the engine, regenerates the icons, builds the Windows installers and
+publishes a GitHub Release as a draft:
+
+```bash
+git tag -a v0.1.0 -m "HyperClicker v0.1.0"
+git push origin v0.1.0
+gh release edit v0.1.0 --draft=false   # review, then publish
+```
+
+Both the app (**Settings → Updates**) and the website's **Download** section read
+that release over the public GitHub API, so release notes and installer links
+are never stale and nothing needs redeploying.
+
+### Enabling signed in-app binary updates
+
+Today the app surfaces release notes and hands you the installer URL, which
+needs no keys. To let the app install the binary itself, add these repository
+secrets:
+
+- `TAURI_SIGNING_PRIVATE_KEY` — from `pnpm tauri signer generate -w ~/.tauri/hyperclicker.key`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose
+
+The release workflow already passes them through and emits
+`latest.json` alongside the installers. Never commit the private key; it is
+covered by `.gitignore` patterns for `*.key`.
+
+---
+
 ## What the engine actually does
 
 The dispatch cycle is: **rule check → batched `SendInput` → wait for one
@@ -132,7 +163,8 @@ src-tauri/
   src/scripting/     engine.rs (Rhai AST), host.rs (Win32 bindings)
   src/config/        store.rs (JSON profile persistence)
   src/main.rs        Tauri commands and app wiring
-scripts/make_icons.py  regenerates the app icons from scratch
+scripts/make_icons.py  regenerates the app icons from the logo geometry
+scripts/make_installer_images.py  NSIS header + sidebar artwork
 website/             Next.js 16.3.8 landing page
 ```
 
@@ -149,3 +181,6 @@ Rust keyword.
 
 An input automation utility for testing and personal workflows. Respect the
 terms of service of whatever you point it at.
+
+The logo geometry is defined once in `src/components/Logo.tsx` and mirrored in
+`scripts/make_icons.py`, so the Windows icon and the in-app mark cannot drift.

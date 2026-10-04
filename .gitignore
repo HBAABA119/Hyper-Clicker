@@ -10,3 +10,7 @@ src-tauri/gen
 
 # Editor / tooling metadata
 .freebuff/
+
+# Tauri updater signing keys must never be committed.
+*.key
+*.pub
