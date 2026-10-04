@@ -95,6 +95,7 @@ export const api = {
 
   fireBurst: () => invoke<number>("trigger_burst_now"),
   panicStop: () => invoke<void>("panic_stop"),
+  uninstall: () => invoke<void>("uninstall_app"),
   updateScript: (code: string) => invoke<number>("update_script", { code }),
 };
 

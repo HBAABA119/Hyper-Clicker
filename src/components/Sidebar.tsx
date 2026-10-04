@@ -77,7 +77,7 @@ export function Sidebar({
               HyperClicker
             </div>
             <div className="mt-1 font-mono text-[0.5625rem] uppercase tracking-[0.2em] text-faint">
-              v1.0
+              v0.1
             </div>
           </div>
         )}

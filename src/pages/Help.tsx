@@ -144,15 +144,15 @@ export function Help() {
     },
     {
       id: "safety",
-      title: "Safety controls",
-      summary: "Escape, auto-stop, and why time-critical is off by default.",
+      title: "Safety controls and privacy",
+      summary: "Escape, auto-stop, why time-critical is off, and what never leaves your machine.",
       body: (
         <>
           <ul className="space-y-2.5">
             {[
               [
                 "Panic stop (Escape)",
-                "Always stops the engine, regardless of what the rule says.",
+                "Always stops the engine, regardless of what the rule says. The stop is checked inside the engine loop rather than in the interface, so it still works if the window has stopped responding.",
               ],
               [
                 "Auto-stop",
@@ -175,6 +175,34 @@ export function Help() {
               </li>
             ))}
           </ul>
+
+          <p className="pt-1">
+            <strong>No administrator rights.</strong> The installer is a per-user
+            install. HyperClicker never requests elevation and does not need it.
+          </p>
+          <p>
+            <strong>Your rule cannot do anything else.</strong> The script engine
+            exposes four read-only functions — window title, one pixel, cursor
+            position and platform — with no file, network or process access. It
+            runs under an operation cap, so a runaway script is stopped instead
+            of freezing the app.
+          </p>
+          <p>
+            <strong>One network call, and only when you ask.</strong> Checking
+            for updates reads the public GitHub releases API. Nothing else leaves
+            the machine — no telemetry, no analytics, no account.
+          </p>
+          <p>
+            <strong>Your profile stays local.</strong> A single JSON file in the
+            app config directory holding your settings and your rule. Settings →
+            Uninstall removes it along with the program.
+          </p>
+          <p>
+            The one real risk is the obvious one: this sends genuine clicks to
+            whatever window has focus. A rule that allows everything while you
+            are typing will click your own UI. Gate on the window title if you
+            plan to leave it running.
+          </p>
         </>
       ),
     },
@@ -208,7 +236,7 @@ export function Help() {
     {
       id: "problems",
       title: "If clicks do not happen",
-      summary: "The three causes that account for almost every failure.",
+      summary: "The causes that account for almost every failure.",
       body: (
         <>
           <ol className="space-y-3">
@@ -225,6 +253,18 @@ export function Help() {
                 "The OS is refusing injection.",
                 "The Rejected counter on the Dashboard is how many batches the OS refused — usually UIPI, when the target window runs at a higher privilege level than this app.",
               ],
+              [
+                "The hotkey did nothing.",
+                "Settings reports whether the global hook installed. If it says unavailable, another program is holding a low-level hook, and the on-screen controls still work. If it says installed, try a different key — some keyboards route F-keys through the OS before applications see them.",
+              ],
+              [
+                "The whole machine feels slow.",
+                "That was a real bug and is fixed: the engine used to spin out the rest of its interval before stopping, and ran at the highest thread priority, so the desktop stayed sluggish after a stop. Stops are immediate now and priority is restored when the engine exits. If it still feels slow while running, turn off time-critical priority.",
+              ],
+              [
+                "Settings will not save a binding.",
+                "A key name is rejected if it is unknown, or if toggle and hold are the same key. The message under the button says which one.",
+              ],
             ].map(([title, detail], index) => (
               <li key={title} className="flex gap-3">
                 <span className="mt-0.5 font-mono text-xs text-faint">
@@ -239,6 +279,57 @@ export function Help() {
               </li>
             ))}
           </ol>
+        </>
+      ),
+    },
+    {
+      id: "first-run",
+      title: "Your first minute",
+      summary: "A safe order to try things in, so nothing runs away from you.",
+      body: (
+        <>
+          <ol className="space-y-3">
+            {[
+              [
+                "Leave the interval where it is",
+                "1,000 us is about 1 click per second. Move the slider later. Start slow so you can see what is happening.",
+              ],
+              [
+                "Check Rules",
+                "The default rule is `true`, which allows everything. If the Dashboard shows Rule blocked, your rule is the reason — the Rules page names the error.",
+              ],
+              [
+                "Press F6",
+                "The status dot turns from idle to running. F6 again stops it. Escape always stops it, whatever the rule says.",
+              ],
+              [
+                "Watch Accepted, not Requested",
+                "The big number is the rate the OS confirmed. If Requested is 1,000 and Accepted is 12, the engine asked for 1,000 a second and the machine delivered 12 — that is Windows, not the engine.",
+              ],
+              [
+                "Stop before you leave",
+                "Escape, or the Stop button. If anything feels wrong, Escape first and investigate after. Auto-stop exists for exactly this.",
+              ],
+            ].map(([title, detail], index) => (
+              <li key={title} className="flex gap-3">
+                <span className="mt-0.5 font-mono text-xs text-faint">
+                  {String(index + 1).padStart(2, "0")}
+                </span>
+                <span>
+                  <span className="block text-xs font-medium">{title}</span>
+                  <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-muted">
+                    {detail}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p>
+            If a hotkey does nothing, check Settings — it tells you whether the
+            global hook installed. If it says <em>unavailable</em>, another
+            program with an exclusive low-level hook is running, and you can
+            still use the on-screen controls.
+          </p>
         </>
       ),
     },
@@ -281,7 +372,7 @@ export function Help() {
               engine.caps?.nativeBindings ? "available" : "unavailable",
             ],
             ["Global hook", engine.caps?.hookActive ? "installed" : "unavailable"],
-            ["Tests passing", "63"],
+            ["Tests passing", "77"],
             [
               "Clicks this session",
               formatCount(engine.stats?.clicksDispatched ?? 0),

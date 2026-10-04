@@ -5,24 +5,51 @@ All notable changes to HyperClicker are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.1] — 2026-10-04
+
+### Added
+
+- **Uninstall from Settings.** Resolves the registered uninstaller from the
+  Windows registry (both hives, both registry views, so MSI and per-user
+  installs both work), falls back to the `uninstall.exe` beside the binary,
+  removes the app config directory, and exits. Guarded by an explicit
+  confirmation, and the config directory is only deleted if it actually looks
+  like HyperClicker's.
+- **A much fuller Help page** — a first-minute walkthrough, a full explanation
+  of every Dashboard number, expanded privacy and safety notes, and a
+  troubleshooting list covering the real failure modes.
 
 ### Fixed
 
-- The release profile's `strip`, `lto` and `codegen-units` were applied to
-  host build scripts and proc macros, which never ship. Overriding them makes
-  clean release builds noticeably faster and stops the machine's application
-  control policy from refusing the generated proc-macro DLLs at load time.
-- The installer artwork was shipped as PNG. NSIS hands those bitmaps to
-  `LoadImage`, which only understands Windows bitmaps, so makensis discarded
-  them with `warning 5040: Unsupported format` and the installer silently fell
-  back to the stock UI. The generator now emits 24-bit BMP, which is what NSIS
-  actually renders.
-- Dispatching the Release workflow published the current ref rather than a
-  chosen tag, so "rebuild v0.1.0" would have created a release named after a
-  branch. It now takes an optional `tag` input.
-- The Release workflow carried a Linux-only `apt-get` step and a duplicated
-  checkout in its Windows job.
+- **Panic Stop did not stop the engine promptly, and the window froze after
+  pressing it.** Three separate causes, all fixed:
+  - `wait_until` never checked the stop flag, so the loop always spun out the
+    rest of its interval — up to ten seconds at the maximum setting — before
+    `stop()`'s join could return. The wait is now interruptible.
+  - `stop()` joined that thread, and `panic_stop` is a synchronous Tauri
+    command, so the join ran on the main thread and blocked the whole event
+    loop. Stops no longer join on the caller; the thread is reaped by the next
+    start or on shutdown.
+  - The default thread priority was `THREAD_PRIORITY_HIGHEST`. A busy-spinning
+    thread above every normal thread starved the UI and input processing, which
+    is the sluggishness that outlived the stop. The default is now
+    `ABOVE_NORMAL`, `TIME_CRITICAL` remains opt-in, and priority is restored
+    when the loop exits.
+- Starting the engine reaped the previous thread before checking whether it was
+  still running, which would have waited on a thread that nothing had asked to
+  stop.
+- The on/off switches were drawn in `surface-sunk` with a white knob — almost
+  the same value as the card behind them, so the control read as a smudge and
+  its state was ambiguous. They now have real contrast and an explicit ON/OFF
+  label.
+- The sidebar showed a hardcoded `v1.0` instead of the real version.
+
+### Security
+
+- The rule engine remains sandboxed to four read-only host functions with no
+  file, network or process access, under an operation cap. Documented on the
+  Help page alongside the uninstall and telemetry behaviour so the app's
+  guarantees are stated rather than implied.
 
 ## [0.1.0] — 2026-10-04
 
@@ -77,6 +104,23 @@ trusted; each of these was a real defect:
 - The default rule `get_active_window_title() != ""` blocked whenever nothing
   held focus, so the engine appeared broken on launch. The default is now
   explicit `true` with the gating example shipped commented out.
+- The installer artwork was shipped as PNG. NSIS hands those bitmaps to
+  `LoadImage`, which only understands Windows bitmaps, so makensis discarded
+  them with `warning 5040: Unsupported format` and the installer silently fell
+  back to the stock UI. The generator now emits 24-bit BMP, which is what NSIS
+  actually renders.
+- The app reported version `1.0.0` while the tag was `v0.1.0`, so the in-app
+  update check compared `0.1.0` against `1.0.0`, decided every release was
+  older, and reported "up to date" forever.
+- The release profile's `strip`, `lto` and `codegen-units` were applied to host
+  build scripts and proc macros, which never ship. Overriding them makes clean
+  release builds noticeably faster and avoids a confusing failure where
+  rustc reports `can't find crate for ...` because Windows refused to load a
+  freshly linked proc-macro DLL.
+- The CI engine job carried a Linux-only `apt-get` step and a duplicated
+  checkout, and the Release workflow published the current ref rather than a
+  chosen tag when dispatched.
 
-[Unreleased]: https://github.com/HBAABA119/Hyper-Clicker/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/HBAABA119/Hyper-Clicker/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/HBAABA119/Hyper-Clicker/releases/tag/v0.1.1
 [0.1.0]: https://github.com/HBAABA119/Hyper-Clicker/releases/tag/v0.1.0

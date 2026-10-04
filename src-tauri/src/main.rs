@@ -5,6 +5,7 @@ mod config;
 mod engine;
 mod hooks;
 mod scripting;
+mod uninstall;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -260,6 +261,30 @@ fn panic_stop(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Uninstall HyperClicker.
+///
+/// Stops the engine first so no click loop survives into the uninstaller, hands
+/// off to the registered uninstaller, removes the app's own config directory,
+/// then exits. This is destructive and irreversible, which is why the UI puts a
+/// confirmation in front of it.
+#[tauri::command]
+fn uninstall_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.click_engine.stop_and_wait();
+
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .unwrap_or_else(|_| std::env::temp_dir());
+
+    // Resolve and spawn first. If we cannot find an uninstaller there is no
+    // point deleting the user's profile.
+    uninstall::launch_uninstaller()?;
+    let _ = uninstall::remove_app_data(&config_dir);
+
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn update_script(state: State<'_, AppState>, code: String) -> Result<u64, String> {
     let version = state.script_engine.compile(&code)?;
@@ -442,6 +467,7 @@ fn main() {
             set_time_critical,
             trigger_burst_now,
             panic_stop,
+            uninstall_app,
             update_script,
             get_profile,
             reset_profile,

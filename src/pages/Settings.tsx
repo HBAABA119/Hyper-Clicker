@@ -4,7 +4,7 @@ import { KeyCapture } from "../components/KeyCapture";
 import { Slider } from "../components/Slider";
 import { Switch } from "../components/Switch";
 import { Updates } from "../components/Updates";
-import { BUTTON_NAMES, formatCount } from "../lib/api";
+import { BUTTON_NAMES, api, formatCount } from "../lib/api";
 import { useEngine } from "../lib/store";
 
 export function Settings() {
@@ -14,6 +14,23 @@ export function Settings() {
   const [draftMouse, setDraftMouse] = useState<number | null>(engine.mouseHold);
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+  const [uninstallError, setUninstallError] = useState<string | null>(null);
+
+  const doUninstall = async () => {
+    setUninstallError(null);
+    setUninstalling(true);
+    try {
+      // The app exits from inside this call, so nothing after it is expected
+      // to render.
+      await api.uninstall();
+    } catch (err) {
+      setUninstallError(String(err));
+      setUninstalling(false);
+      setConfirmingUninstall(false);
+    }
+  };
 
   const dirty =
     draftToggle !== engine.toggleKey ||
@@ -205,6 +222,61 @@ export function Settings() {
         >
           Reset profile to defaults
         </button>
+      </section>
+
+      {/* ---------------- uninstall ---------------- */}
+      <section className="card border-stop/25 p-6">
+        <h2 className="label">Uninstall</h2>
+        <p className="mt-2 text-xs leading-relaxed text-muted">
+          Removes HyperClicker and everything it stored — the program files, the
+          start-menu and desktop shortcuts, and your profile with its hotkeys and
+          rule. This cannot be undone.
+        </p>
+
+        {!confirmingUninstall ? (
+          <button
+            type="button"
+            onClick={() => setConfirmingUninstall(true)}
+            disabled={!engine.desktop}
+            className="mt-4 rounded-xl border border-stop/40 bg-surface px-4 py-2.5 text-sm font-medium text-stop transition-colors hover:bg-stop-soft disabled:opacity-40"
+          >
+            Uninstall HyperClicker
+          </button>
+        ) : (
+          <div className="mt-4 rounded-xl border border-stop/40 bg-stop-soft/50 p-4">
+            <p className="text-sm font-medium text-stop">
+              Uninstall and delete all app data?
+            </p>
+            <p className="mt-1 text-[0.6875rem] leading-relaxed text-muted">
+              HyperClicker will close and the Windows installer will run. Your
+              hotkeys, rule and timing settings will not be recoverable.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={doUninstall}
+                disabled={uninstalling}
+                className="rounded-xl bg-stop px-4 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                {uninstalling ? "Uninstalling…" : "Yes, uninstall everything"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmingUninstall(false)}
+                disabled={uninstalling}
+                className="rounded-xl border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink transition-colors hover:border-line-strong disabled:opacity-40"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {uninstallError ? (
+          <p className="mt-3 text-[0.6875rem] leading-relaxed text-stop">
+            {uninstallError}
+          </p>
+        ) : null}
       </section>
 
       {/* ---------------- updates ---------------- */}
