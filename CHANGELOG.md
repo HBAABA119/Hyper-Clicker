@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- The release profile's `strip`, `lto` and `codegen-units` were applied to
+  host build scripts and proc macros, which never ship. Overriding them makes
+  clean release builds noticeably faster and stops the machine's application
+  control policy from refusing the generated proc-macro DLLs at load time.
+- The installer artwork was shipped as PNG. NSIS hands those bitmaps to
+  `LoadImage`, which only understands Windows bitmaps, so makensis discarded
+  them with `warning 5040: Unsupported format` and the installer silently fell
+  back to the stock UI. The generator now emits 24-bit BMP, which is what NSIS
+  actually renders.
+- Dispatching the Release workflow published the current ref rather than a
+  chosen tag, so "rebuild v0.1.0" would have created a release named after a
+  branch. It now takes an optional `tag` input.
+- The Release workflow carried a Linux-only `apt-get` step and a duplicated
+  checkout in its Windows job.
 
 ## [0.1.0] — 2026-10-04
 

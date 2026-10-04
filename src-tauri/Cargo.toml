@@ -33,3 +33,17 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Build scripts and proc macros (Rhai's derive macros, serde's, tauri-build's)
+# are host artifacts that never ship. Optimising, LTO-linking and stripping
+# them only slows every clean release build down -- and on a machine with
+# application control enabled, stripping them was enough for the generated
+# proc-macro DLL to be refused at load time, which rustc reports as
+# `can't find crate for ...`.
+[profile.release.build-override]
+opt-level = 0
+codegen-units = 256
+debug = false
+debug-assertions = false
+strip = "none"
+incremental = false
