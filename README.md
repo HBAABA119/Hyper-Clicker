@@ -29,6 +29,15 @@ To produce a distributable installer:
 pnpm tauri build      # .msi and setup.exe land in src-tauri/target/release/bundle/
 ```
 
+> **If a release build fails with `can't find crate for ...`** on a machine
+> whose application control policy is enabled, that is not a missing
+> dependency. Windows is refusing to load a freshly linked build script or
+> proc-macro DLL, and rustc reports the blocked artifact as a missing crate.
+> `python scripts/pe_imports.py <some-build-script.exe>` lists what the DLL
+> imports so you can confirm, and the usual fix is an antivirus exclusion for
+> `src-tauri/target`. Debug builds are often unaffected, which is why this
+> only shows up on `tauri build`.
+
 To run the engine tests:
 
 ```bash
@@ -52,13 +61,26 @@ pnpm build            # static export into website/out
 ## Releases and updates
 
 Pushing a `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
-which tests the engine, regenerates the icons, builds the Windows installers and
-publishes a GitHub Release as a draft:
+which tests the engine, regenerates the icons and artwork, builds the Windows
+installers and creates a GitHub Release **as a draft**:
 
 ```bash
 git tag -a v0.1.0 -m "HyperClicker v0.1.0"
 git push origin v0.1.0
-gh release edit v0.1.0 --draft=false   # review, then publish
+
+# review the artifacts, then publish
+gh release edit v0.1.0 --draft=false
+```
+
+The draft is deliberate, but note that `/releases/latest` — what the app and the
+website both read — **ignores drafts**. Until you publish, neither surfaces the
+release, so the publish step is not optional.
+
+The workflow also runs on demand, taking an optional `tag` input so an existing
+release can be rebuilt without moving the tag:
+
+```bash
+gh workflow run release.yml -f tag=v0.1.0
 ```
 
 Both the app (**Settings → Updates**) and the website's **Download** section read
@@ -75,8 +97,15 @@ secrets:
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose
 
 The release workflow already passes them through and emits
-`latest.json` alongside the installers. Never commit the private key; it is
-covered by `.gitignore` patterns for `*.key`.
+`latest.json` alongside the installers. Without them the workflow logs
+`Signature not found for the updater JSON. Skipping upload...` and skips that
+one file; the installers themselves still build and publish. Never commit the
+private key; it is covered by `.gitignore` patterns for `*.key`.
+
+The installer artwork NSIS receives has to be a **BMP**, not a PNG. NSIS loads
+those bitmaps with `LoadImage`, which only understands Windows bitmaps, and a
+PNG is dropped with `warning 5040: Unsupported format` in favour of the stock
+UI. `scripts/make_installer_images.py` emits 24-bit BMP for that reason.
 
 ---
 
