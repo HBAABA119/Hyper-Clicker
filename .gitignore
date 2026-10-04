@@ -14,3 +14,7 @@ src-tauri/gen
 # Tauri updater signing keys must never be committed.
 *.key
 *.pub
+
+# Next.js regenerates this on every build and dev server start,
+# rewriting the .next paths. Committing it leaves the tree dirty.
+website/next-env.d.ts
