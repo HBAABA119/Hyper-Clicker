@@ -1,6 +1,6 @@
 [package]
 name = "hyperclicker"
-version = "1.0.0"
+version = "0.1.0"
 description = "High-precision OS-level click engine"
 authors = ["HyperClicker"]
 edition = "2021"
