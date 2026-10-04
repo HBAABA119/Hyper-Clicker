@@ -40,8 +40,8 @@
     ],
     "windows": {
       "nsis": {
-        "headerImage": "installer-assets/header.png",
-        "sidebarImage": "installer-assets/sidebar.png",
+        "headerImage": "installer-assets/header.bmp",
+        "sidebarImage": "installer-assets/sidebar.bmp",
         "installMode": "currentUser",
         "languages": ["English"],
         "displayLanguageSelector": false

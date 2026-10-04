@@ -45,6 +45,15 @@ jobs:
           python scripts/make_icons.py
           python scripts/make_installer_images.py
 
+      # Fails loudly and early if GITHUB_TOKEN cannot publish a release,
+      # instead of surfacing as an opaque 403 from the tauri-action step.
+      - name: Check that the workflow token can write to the repository
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api "repos/$env:GITHUB_REPOSITORY" --jq '.permissions'
+          gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=1" --jq 'length'
+
       # TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD are
       # optional today (the app checks GitHub Releases for notes and download
       # links). Add them as repository secrets to enable signed in-app binary
