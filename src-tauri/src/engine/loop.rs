@@ -140,7 +140,11 @@ fn jittered_nanos(base_nanos: u64, spread_us: u32, rng: &mut Rng) -> u64 {
     let spread = rng.next() % (2 * spread_us as u64 + 1);
     let offset = spread as i64 - spread_us as i64;
     let nanos = base_nanos as i64 + offset * 1_000;
-    if nanos < 0 { 0 } else { nanos as u64 }
+    if nanos < 0 {
+        0
+    } else {
+        nanos as u64
+    }
 }
 
 /// Coarse-sleep while far from the deadline, spin-lock for the final stretch.
@@ -186,7 +190,9 @@ impl ClickEngine {
             return Ok(());
         }
 
-        self.state.started_at_millis.store(now_millis(), Ordering::SeqCst);
+        self.state
+            .started_at_millis
+            .store(now_millis(), Ordering::SeqCst);
 
         let state = self.state.clone();
         let rule = Arc::clone(&self.rule);
@@ -335,7 +341,10 @@ fn engine_loop(state: EngineSharedState, rule: Arc<ScriptEngine>) {
         }
 
         let base = state.interval_nanos.load(Ordering::Relaxed);
-        let spread = state.jitter_micros.load(Ordering::Relaxed).min(MAX_JITTER_US);
+        let spread = state
+            .jitter_micros
+            .load(Ordering::Relaxed)
+            .min(MAX_JITTER_US);
         let interval = Duration::from_nanos(jittered_nanos(base, spread, &mut rng));
         let deadline = start + interval;
         wait_until(deadline);
@@ -423,7 +432,10 @@ mod tests {
             .store(now_millis().saturating_sub(500), Ordering::Relaxed);
         engine.start().expect("engine should start");
         thread::sleep(Duration::from_millis(150));
-        assert!(!engine.is_running(), "auto-stop should have stopped the engine");
+        assert!(
+            !engine.is_running(),
+            "auto-stop should have stopped the engine"
+        );
     }
 
     #[test]

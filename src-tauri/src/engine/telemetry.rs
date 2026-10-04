@@ -222,7 +222,7 @@ mod tests {
             .store(now_millis().saturating_sub(30_000), Ordering::Relaxed);
         let remaining = stop_in_ms(&state).expect("armed");
         assert!(
-            remaining <= 30_000 && remaining >= 28_000,
+            (28_000..=30_000).contains(&remaining),
             "expected roughly 30s left, got {remaining}"
         );
 

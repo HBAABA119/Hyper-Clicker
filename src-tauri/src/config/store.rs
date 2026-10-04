@@ -118,11 +118,13 @@ mod tests {
         let dir = temp_dir("roundtrip");
         let store = ConfigStore::new(&dir);
 
-        let mut profile = Profile::default();
-        profile.interval_micros = 250;
-        profile.burst = 8;
-        profile.button = 2;
-        profile.script = "1 < 2".to_string();
+        let profile = Profile {
+            interval_micros: 250,
+            burst: 8,
+            button: 2,
+            script: "1 < 2".to_string(),
+            ..Profile::default()
+        };
 
         store.save(&profile).expect("save should succeed");
         let loaded = store.load();
@@ -148,7 +150,9 @@ mod tests {
     #[test]
     fn default_script_is_valid_and_allows() {
         let engine = crate::scripting::ScriptEngine::new();
-        engine.compile(DEFAULT_SCRIPT).expect("default rule compiles");
+        engine
+            .compile(DEFAULT_SCRIPT)
+            .expect("default rule compiles");
         assert_eq!(
             engine.evaluate().verdict,
             crate::scripting::RuleVerdict::Allow

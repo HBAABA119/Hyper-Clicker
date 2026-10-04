@@ -137,9 +137,9 @@ mod imp {
     use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, DispatchMessageW, GetMessageW, KBDLLHOOKSTRUCT, MSLLHOOKSTRUCT,
-        PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, HC_ACTION,
-        HHOOK, MSG, WH_KEYBOARD_LL, WH_MOUSE_LL,
+        CallNextHookEx, DispatchMessageW, GetMessageW, PostThreadMessageW, SetWindowsHookExW,
+        TranslateMessage, UnhookWindowsHookEx, HC_ACTION, HHOOK, KBDLLHOOKSTRUCT, MSG,
+        MSLLHOOKSTRUCT, WH_KEYBOARD_LL, WH_MOUSE_LL,
     };
 
     /// Injected-event flags from the low-level hook structs.
@@ -170,13 +170,12 @@ mod imp {
             unsafe {
                 let kb = &*(lparam as *const KBDLLHOOKSTRUCT);
                 // Drop anything the OS injected, including our own clicks.
-                if (kb.flags as u32) & LLKHF_INJECTED == 0 {
+                if kb.flags & LLKHF_INJECTED == 0 {
                     let msg = wparam as u32;
                     let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
                     let up = msg == WM_KEYUP || msg == WM_SYSKEYUP;
                     if down || up {
-                        if let Some(action) = classify_key(&bindings_snapshot(), kb.vkCode as u32, down)
-                        {
+                        if let Some(action) = classify_key(&bindings_snapshot(), kb.vkCode, down) {
                             super::dispatch(action);
                         }
                     }
@@ -192,7 +191,7 @@ mod imp {
                 let ms = &*(lparam as *const MSLLHOOKSTRUCT);
                 // This is what stops the engine from retriggering the mouse
                 // hotkey that started it.
-                if (ms.flags as u32) & LLMHF_INJECTED == 0 {
+                if ms.flags & LLMHF_INJECTED == 0 {
                     let (button, down) = match wparam as u32 {
                         WM_LBUTTONDOWN => (0u8, true),
                         WM_LBUTTONUP => (0, false),
@@ -203,9 +202,7 @@ mod imp {
                         _ => (255, false),
                     };
                     if button != 255 {
-                        if let Some(action) =
-                            classify_mouse(&bindings_snapshot(), button, down)
-                        {
+                        if let Some(action) = classify_mouse(&bindings_snapshot(), button, down) {
                             super::dispatch(action);
                         }
                     }
@@ -230,16 +227,14 @@ mod imp {
             .spawn(move || {
                 THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::SeqCst);
 
-                let keyboard: HHOOK =
-                    unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), null_mut(), 0) };
+                let keyboard: HHOOK = unsafe {
+                    SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), null_mut(), 0)
+                };
                 let mouse: HHOOK =
                     unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), null_mut(), 0) };
 
                 // Active only if at least one hook installed successfully.
-                ACTIVE.store(
-                    !keyboard.is_null() || !mouse.is_null(),
-                    Ordering::SeqCst,
-                );
+                ACTIVE.store(!keyboard.is_null() || !mouse.is_null(), Ordering::SeqCst);
 
                 // A low-level hook is serviced through this thread's message
                 // loop, so it must pump until WM_QUIT.
@@ -442,7 +437,10 @@ mod tests {
             classify_key(&b, b.hold_vk, true),
             Some(HookAction::HoldStart)
         );
-        assert_eq!(classify_key(&b, b.hold_vk, false), Some(HookAction::HoldEnd));
+        assert_eq!(
+            classify_key(&b, b.hold_vk, false),
+            Some(HookAction::HoldEnd)
+        );
     }
 
     #[test]
@@ -471,10 +469,7 @@ mod tests {
         let mut b = Bindings::default();
         assert_eq!(classify_mouse(&b, 1, true), None);
         b.mouse_hold = Some(1);
-        assert_eq!(
-            classify_mouse(&b, 1, true),
-            Some(HookAction::HoldStart)
-        );
+        assert_eq!(classify_mouse(&b, 1, true), Some(HookAction::HoldStart));
         assert_eq!(classify_mouse(&b, 1, false), Some(HookAction::HoldEnd));
         assert_eq!(classify_mouse(&b, 0, true), None);
     }

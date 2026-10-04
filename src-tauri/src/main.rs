@@ -290,11 +290,10 @@ fn reset_profile(state: State<'_, AppState>) -> Result<Profile, String> {
 }
 
 fn apply_profile(state: &AppState, profile: &Profile) -> Result<(), String> {
-    state
-        .click_engine
-        .state
-        .interval_nanos
-        .store(profile.interval_micros.saturating_mul(1_000), Ordering::Relaxed);
+    state.click_engine.state.interval_nanos.store(
+        profile.interval_micros.saturating_mul(1_000),
+        Ordering::Relaxed,
+    );
     state
         .click_engine
         .state
@@ -305,25 +304,23 @@ fn apply_profile(state: &AppState, profile: &Profile) -> Result<(), String> {
         .state
         .button
         .store(profile.button.min(2), Ordering::Relaxed);
-    state
-        .click_engine
-        .state
-        .mode
-        .store(if profile.mode == MODE_CONTINUOUS {
+    state.click_engine.state.mode.store(
+        if profile.mode == MODE_CONTINUOUS {
             MODE_CONTINUOUS
         } else {
             MODE_BURST
-        }, Ordering::Relaxed);
+        },
+        Ordering::Relaxed,
+    );
     state
         .click_engine
         .state
         .time_critical
         .store(profile.time_critical, Ordering::Relaxed);
-    state
-        .click_engine
-        .state
-        .stop_after_ms
-        .store(profile.auto_stop_minutes.saturating_mul(60_000), Ordering::Relaxed);
+    state.click_engine.state.stop_after_ms.store(
+        profile.auto_stop_minutes.saturating_mul(60_000),
+        Ordering::Relaxed,
+    );
     state
         .click_engine
         .state
@@ -332,10 +329,7 @@ fn apply_profile(state: &AppState, profile: &Profile) -> Result<(), String> {
 
     state.script_engine.compile(&profile.script)?;
     state.hook_manager.apply_bindings(bindings_from(profile));
-    *state
-        .profile
-        .lock()
-        .map_err(|_| "profile lock poisoned")? = profile.clone();
+    *state.profile.lock().map_err(|_| "profile lock poisoned")? = profile.clone();
     state.persist()
 }
 
@@ -414,7 +408,9 @@ fn main() {
 
             // Hotkeys own engine start/stop.
             match state.hook_manager.start() {
-                Ok(rx) => spawn_hook_dispatcher(Arc::clone(&state.click_engine), rx, handle.clone()),
+                Ok(rx) => {
+                    spawn_hook_dispatcher(Arc::clone(&state.click_engine), rx, handle.clone())
+                }
                 Err(err) => eprintln!("hyperclicker: global hook unavailable: {err}"),
             }
 
@@ -501,8 +497,19 @@ mod tests {
 
     #[test]
     fn auto_stop_minutes_are_clamped_to_a_day() {
-        assert_eq!(0u64.saturating_mul(60_000), 0);
-        assert_eq!(u64::MAX.min(24 * 60) * 60_000, 86_400_000);
+        // Mirrors `set_auto_stop`: minutes are capped at 24 h, then converted
+        // to milliseconds with saturating arithmetic.
+        let millis = |minutes: u64| minutes.min(24 * 60).saturating_mul(60_000);
+
+        assert_eq!(millis(0), 0, "0 disarms the auto-stop timer");
+        assert_eq!(millis(1), 60_000);
+        assert_eq!(millis(24 * 60), 86_400_000, "exactly a day passes through");
+        assert_eq!(millis(10_000), 86_400_000, "beyond a day is capped");
+        assert_eq!(
+            millis(u64::MAX),
+            86_400_000,
+            "an absurd value cannot overflow the deadline"
+        );
     }
 
     #[test]

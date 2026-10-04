@@ -69,7 +69,8 @@ mod imp {
             bmi.bmiHeader.biCompression = BI_RGB;
 
             let mut bits: *mut core::ffi::c_void = null_mut();
-            let section = CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+            let section =
+                CreateDIBSection(screen_dc, &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
             if section.is_null() || bits.is_null() {
                 DeleteDC(mem_dc);
                 ReleaseDC(null_mut(), screen_dc);
