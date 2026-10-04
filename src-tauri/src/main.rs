@@ -342,6 +342,29 @@ fn bindings_from(profile: &Profile) -> Bindings {
     }
 }
 
+/// Apply one hotkey action to the engine.
+///
+/// Extracted from the dispatcher thread so the F6/F7/Escape semantics can be
+/// tested directly. This is the whole global-hotkey contract: `Toggle` flips,
+/// `HoldStart` is idempotent, and `HoldEnd`/`PanicStop` always stop.
+fn apply_hook_action(engine: &ClickEngine, action: HookAction) {
+    match action {
+        HookAction::Toggle => {
+            if engine.is_running() {
+                engine.stop();
+            } else if let Err(err) = engine.start() {
+                eprintln!("hyperclicker: hotkey start failed: {err}");
+            }
+        }
+        HookAction::HoldStart => {
+            if let Err(err) = engine.start() {
+                eprintln!("hyperclicker: hotkey start failed: {err}");
+            }
+        }
+        HookAction::HoldEnd | HookAction::PanicStop => engine.stop(),
+    }
+}
+
 /// Translate hook actions into engine state changes.
 fn spawn_hook_dispatcher(
     engine: Arc<ClickEngine>,
@@ -352,21 +375,7 @@ fn spawn_hook_dispatcher(
         .name("hyperclicker-hotkeys".into())
         .spawn(move || {
             while let Ok(action) = rx.recv() {
-                match action {
-                    HookAction::Toggle => {
-                        if engine.is_running() {
-                            engine.stop();
-                        } else if let Err(err) = engine.start() {
-                            eprintln!("hyperclicker: hotkey start failed: {err}");
-                        }
-                    }
-                    HookAction::HoldStart => {
-                        if let Err(err) = engine.start() {
-                            eprintln!("hyperclicker: hotkey start failed: {err}");
-                        }
-                    }
-                    HookAction::HoldEnd | HookAction::PanicStop => engine.stop(),
-                }
+                apply_hook_action(&engine, action);
                 let _ = app.emit("engine://status", engine.is_running());
             }
         })
@@ -443,7 +452,9 @@ fn main() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(state) = app_handle.try_state::<AppState>() {
                     if state.ready.load(Ordering::SeqCst) {
-                        state.click_engine.stop();
+                        // Shutdown is the one place it is safe to wait for the
+                        // loop: the process is going away regardless.
+                        state.click_engine.stop_and_wait();
                         state.hook_manager.stop();
                         let _ = state.persist();
                     }
@@ -458,6 +469,93 @@ fn main() {
 mod tests {
     use super::*;
     use crate::hooks::vk_from_name;
+
+    fn test_engine() -> Arc<ClickEngine> {
+        let engine = Arc::new(ClickEngine::new(Arc::new(ScriptEngine::new())));
+        engine
+            .state
+            .interval_nanos
+            .store(2_000_000, Ordering::Relaxed);
+        engine
+    }
+
+    // --- Global hotkey semantics (F6 toggle, F7 hold, Escape panic) ---------
+
+    #[test]
+    fn f6_toggles_the_engine_on_then_off() {
+        let engine = test_engine();
+        assert!(!engine.is_running());
+        apply_hook_action(&engine, HookAction::Toggle);
+        assert!(engine.is_running(), "F6 must start the engine");
+        apply_hook_action(&engine, HookAction::Toggle);
+        assert!(!engine.is_running(), "F6 must stop the engine");
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn escape_always_stops_regardless_of_rule_state() {
+        let engine = test_engine();
+        apply_hook_action(&engine, HookAction::Toggle);
+        assert!(engine.is_running());
+        apply_hook_action(&engine, HookAction::PanicStop);
+        assert!(!engine.is_running(), "Escape must always stop the engine");
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn hold_start_is_idempotent() {
+        let engine = test_engine();
+        // Key auto-repeat must not spawn a thread per repeat.
+        for _ in 0..50 {
+            apply_hook_action(&engine, HookAction::HoldStart);
+        }
+        assert!(engine.is_running());
+        apply_hook_action(&engine, HookAction::HoldEnd);
+        assert!(!engine.is_running());
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn rapid_toggle_never_ends_up_running() {
+        let engine = test_engine();
+        for _ in 0..40 {
+            apply_hook_action(&engine, HookAction::Toggle);
+        }
+        // 40 toggles from stopped must end stopped.
+        assert!(!engine.is_running());
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn the_default_bindings_resolve_to_f6_and_f7() {
+        let profile = Profile::default();
+        let bindings = bindings_from(&profile);
+        assert_eq!(bindings.toggle_vk, 0x75, "F6");
+        assert_eq!(bindings.hold_vk, 0x76, "F7");
+        assert_eq!(bindings.panic_vk, hooks::VK_ESCAPE);
+    }
+
+    #[test]
+    fn panic_stop_is_not_blocked_by_a_long_interval() {
+        // The regression: the window froze because the stop command joined a
+        // loop that was waiting out a long interval on the main thread.
+        let engine = test_engine();
+        engine
+            .state
+            .interval_nanos
+            .store(10_000_000_000, Ordering::Relaxed);
+        apply_hook_action(&engine, HookAction::Toggle);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+
+        let start = std::time::Instant::now();
+        engine.stop();
+        assert!(
+            start.elapsed() < engine::r#loop::STOP_DEADLINE,
+            "panic stop blocked for {:?}",
+            start.elapsed()
+        );
+        engine.stop_and_wait();
+    }
 
     #[test]
     fn telemetry_event_name_is_stable() {

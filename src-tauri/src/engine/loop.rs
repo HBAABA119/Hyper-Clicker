@@ -47,6 +47,16 @@ const SPIN_THRESHOLD: Duration = Duration::from_micros(1200);
 /// Longest single coarse sleep, so `stop()` stays responsive.
 const MAX_COARSE_SLEEP: Duration = Duration::from_millis(2);
 
+/// How many `spin_loop()` calls may run before yielding the remainder of the
+/// core back to the scheduler.
+const YIELD_EVERY: u32 = 512;
+
+/// Hard ceiling a stop must stay under. Nothing in the engine should come close;
+/// exceeding it means a dispatch or a hook is stuck. Asserted rather than
+/// measured at runtime, so it is only compiled into the test build.
+#[cfg(test)]
+pub const STOP_DEADLINE: Duration = Duration::from_millis(250);
+
 #[derive(Clone)]
 pub struct EngineSharedState {
     pub is_running: Arc<AtomicBool>,
@@ -148,19 +158,38 @@ fn jittered_nanos(base_nanos: u64, spread_us: u32, rng: &mut Rng) -> u64 {
 }
 
 /// Coarse-sleep while far from the deadline, spin-lock for the final stretch.
-fn wait_until(deadline: Instant) -> Duration {
+///
+/// `stop_requested` is polled throughout so the wait is *interruptible*. Without
+/// this the loop spins all the way to the deadline (up to ten seconds at the
+/// maximum interval) and `stop()` -- which joins this thread, and is reached
+/// from the main thread via a synchronous Tauri command -- froze the whole UI.
+fn wait_until(deadline: Instant, stop_requested: &AtomicBool) -> Duration {
     let start = Instant::now();
     loop {
+        if stop_requested.load(Ordering::Relaxed) {
+            break;
+        }
         let now = Instant::now();
         if now >= deadline {
             break;
         }
         let remaining = deadline - now;
         if remaining > SPIN_THRESHOLD {
+            // Never sleep past the stop flag's maximum latency.
             let coarse = (remaining - SPIN_THRESHOLD).min(MAX_COARSE_SLEEP);
             thread::sleep(coarse);
         } else {
-            spin_loop();
+            // Yield regularly. A tight spin here runs at the thread's elevated
+            // priority and starves the UI and input processing on the same box.
+            let mut spins = 0u32;
+            while spins < YIELD_EVERY {
+                spins += 1;
+                if stop_requested.load(Ordering::Relaxed) {
+                    return start.elapsed();
+                }
+                spin_loop();
+            }
+            thread::yield_now();
         }
     }
     deadline.saturating_duration_since(start)
@@ -186,6 +215,18 @@ impl ClickEngine {
     }
 
     pub fn start(&self) -> Result<(), String> {
+        // Check for "already running" *before* reaping. Reaping joins the
+        // previous thread, and joining a thread that is still dispatching would
+        // block until something stops it -- which is exactly what this call
+        // came here to do.
+        if self.state.is_running.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // A previous run may still be unwinding after `stop()` returned. Join
+        // it so two loops can never dispatch at the same time.
+        self.reap_blocking();
+
         if self.state.is_running.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
@@ -213,13 +254,45 @@ impl ClickEngine {
         }
     }
 
+    /// Stop the engine.
+    ///
+    /// Signals the loop and returns immediately. It deliberately does **not**
+    /// join: this is reached from `panic_stop`, a synchronous Tauri command
+    /// that runs on the main thread, so blocking here froze the entire window
+    /// while the engine spun out the rest of its interval. The thread is
+    /// reaped by the next `start()` (which must not race it) and on drop.
     pub fn stop(&self) {
         self.state.is_running.store(false, Ordering::SeqCst);
+        self.reap_if_finished();
+    }
+
+    /// Join the engine thread only if it has already returned.
+    fn reap_if_finished(&self) {
+        let finished = self
+            .handle
+            .lock()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|h| h.is_finished()))
+            .unwrap_or(false);
+        if finished {
+            self.reap_blocking();
+        }
+    }
+
+    /// Join the previous thread so two engines can never run at once.
+    fn reap_blocking(&self) {
         if let Ok(mut slot) = self.handle.lock() {
             if let Some(handle) = slot.take() {
                 let _ = handle.join();
             }
         }
+    }
+
+    /// Stop and wait for the loop to actually exit. Used on shutdown, where
+    /// leaving a thread mid-dispatch would outlive the process state.
+    pub fn stop_and_wait(&self) {
+        self.state.is_running.store(false, Ordering::SeqCst);
+        self.reap_blocking();
     }
 
     /// Dispatch one burst immediately, without entering the loop.
@@ -269,8 +342,27 @@ fn dispatch_once(state: &EngineSharedState, batcher: &InputBatcher) -> u32 {
     }
 }
 
+/// Restores normal thread priority when the engine loop exits.
+///
+/// Deliberately not `Drop`-based on the state: a guard local to the loop
+/// thread guarantees the reset runs on exactly the thread that was elevated,
+/// which is the only thread whose priority `SetThreadPriority` can change.
+struct PriorityGuard;
+
+impl Drop for PriorityGuard {
+    fn drop(&mut self) {
+        input_win::reset_thread_priority();
+    }
+}
+
 fn engine_loop(state: EngineSharedState, rule: Arc<ScriptEngine>) {
     input_win::elevate_thread_priority(state.time_critical.load(Ordering::Relaxed));
+
+    // Always hand the core back on the way out. Leaving the thread at an
+    // elevated priority after the run ends is what made the whole desktop feel
+    // stuck right after stopping.
+    // Bound (not `let _`) so it drops at the end of the loop, not immediately.
+    let _priority_guard = PriorityGuard;
 
     let mut batcher = InputBatcher::new();
     let mut cached_rule_version = u64::MAX;
@@ -333,10 +425,19 @@ fn engine_loop(state: EngineSharedState, rule: Arc<ScriptEngine>) {
         }
 
         let start = Instant::now();
+
+        // Re-check immediately before dispatching. A stop that lands after the
+        // loop-head check must not still emit a whole burst of clicks.
+        if !state.is_running.load(Ordering::Relaxed) {
+            break;
+        }
         dispatch_once(&state, &batcher);
 
         if mode == MODE_CONTINUOUS {
-            // No interval: go straight back around.
+            // No interval. Yield rather than going straight back around, so the
+            // UI thread and input processing are not starved by a core-looping
+            // thread at elevated priority.
+            thread::yield_now();
             continue;
         }
 
@@ -347,7 +448,7 @@ fn engine_loop(state: EngineSharedState, rule: Arc<ScriptEngine>) {
             .min(MAX_JITTER_US);
         let interval = Duration::from_nanos(jittered_nanos(base, spread, &mut rng));
         let deadline = start + interval;
-        wait_until(deadline);
+        wait_until(deadline, &state.is_running);
         let overshoot = Instant::now().saturating_duration_since(deadline);
         state
             .last_jitter_nanos
@@ -362,6 +463,18 @@ mod tests {
 
     fn engine() -> ClickEngine {
         ClickEngine::new(Arc::new(ScriptEngine::new()))
+    }
+
+    fn running_engine(interval_micros: u64) -> ClickEngine {
+        let engine = engine();
+        engine
+            .state
+            .interval_nanos
+            .store(interval_micros.saturating_mul(1_000), Ordering::Relaxed);
+        engine.start().expect("engine should start");
+        // Give the loop a moment to actually get going before asserting.
+        thread::sleep(Duration::from_millis(20));
+        engine
     }
 
     #[test]
@@ -456,7 +569,8 @@ mod tests {
     fn wait_until_never_returns_early() {
         let start = Instant::now();
         let target = Duration::from_millis(12);
-        wait_until(start + target);
+        let never = AtomicBool::new(false);
+        wait_until(start + target, &never);
         assert!(
             start.elapsed() >= target,
             "returned after {:?}, expected at least {:?}",
@@ -469,7 +583,8 @@ mod tests {
     fn wait_until_does_not_overshoot_badly() {
         let start = Instant::now();
         let target = Duration::from_millis(12);
-        wait_until(start + target);
+        let never = AtomicBool::new(false);
+        wait_until(start + target, &never);
         let overshoot = start.elapsed() - target;
         assert!(
             overshoot < Duration::from_millis(8),
@@ -481,8 +596,150 @@ mod tests {
     #[test]
     fn wait_until_returns_immediately_for_a_passed_deadline() {
         let start = Instant::now();
-        wait_until(start - Duration::from_millis(5));
+        let never = AtomicBool::new(false);
+        wait_until(start - Duration::from_millis(5), &never);
         assert!(start.elapsed() < Duration::from_millis(5));
+    }
+
+    // --- Stop latency -------------------------------------------------------
+    //
+    // These are the regressions behind the UI freezing when Panic Stop was
+    // pressed: `stop()` used to join a loop that spun all the way to its
+    // deadline, on the main thread.
+
+    #[test]
+    fn wait_until_aborts_the_moment_a_stop_is_requested() {
+        let stop = Arc::new(AtomicBool::new(false));
+        let start = Instant::now();
+        // A ten second deadline, the maximum the app allows.
+        let deadline = start + Duration::from_secs(10);
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            thread::sleep(Duration::from_millis(30));
+            flag.store(true, Ordering::SeqCst);
+        });
+        wait_until(deadline, &stop);
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "wait ignored the stop flag and ran for {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn stop_returns_promptly_even_with_a_very_long_interval() {
+        let engine = running_engine(5_000_000);
+        let start = Instant::now();
+        engine.stop();
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < STOP_DEADLINE,
+            "stop() blocked the caller for {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn stop_is_immediate_at_the_maximum_interval() {
+        // The original defect: the UI froze for as long as the interval.
+        let engine = running_engine(10_000_000);
+        let start = Instant::now();
+        engine.stop();
+        assert!(
+            start.elapsed() < STOP_DEADLINE,
+            "stop() at a 10 s interval blocked for {:?}",
+            start.elapsed()
+        );
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn no_clicks_are_dispatched_after_stop_returns() {
+        let engine = running_engine(200);
+        engine.stop();
+        // Let any in-flight dispatch settle.
+        thread::sleep(Duration::from_millis(50));
+        let after_stop = engine.state.clicks_dispatched.load(Ordering::Relaxed);
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            engine.state.clicks_dispatched.load(Ordering::Relaxed),
+            after_stop,
+            "the engine kept clicking after stop() returned"
+        );
+        engine.stop_and_wait();
+    }
+
+    #[test]
+    fn restarting_never_leaves_two_engines_running() {
+        let engine = engine();
+        engine.state.burst_size.store(1, Ordering::Relaxed);
+        engine
+            .state
+            .interval_nanos
+            .store(500_000, Ordering::Relaxed);
+
+        for _ in 0..25 {
+            engine.start().expect("restart should succeed");
+            thread::sleep(Duration::from_millis(2));
+            engine.stop();
+        }
+        engine.stop_and_wait();
+        assert!(!engine.is_running());
+
+        // Exactly one thread may still be alive, and it must already be joined.
+        assert!(
+            engine
+                .handle
+                .lock()
+                .map(|slot| slot.is_none())
+                .unwrap_or(false),
+            "the previous engine thread was not reaped before the next start"
+        );
+    }
+
+    #[test]
+    fn start_stop_churn_never_deadlocks() {
+        let engine = engine();
+        engine.state.interval_nanos.store(10_000, Ordering::Relaxed);
+        let stopwatch = Instant::now();
+        for _ in 0..200 {
+            engine.start().expect("start");
+            engine.stop();
+        }
+        engine.stop_and_wait();
+        assert!(
+            stopwatch.elapsed() < Duration::from_secs(10),
+            "200 start/stop cycles took {:?}",
+            stopwatch.elapsed()
+        );
+    }
+
+    #[test]
+    fn continuous_mode_does_not_burn_a_core_forever() {
+        // Continuous mode with no interval must still let the scheduler run.
+        let engine = engine();
+        engine.state.mode.store(MODE_CONTINUOUS, Ordering::Relaxed);
+        engine.start().expect("engine should start");
+        thread::sleep(Duration::from_millis(250));
+        engine.stop_and_wait();
+        assert!(!engine.is_running());
+    }
+
+    #[test]
+    fn burst_survives_extreme_parameters() {
+        // The largest burst the app permits, stopped mid-flight.
+        let engine = engine();
+        engine.state.mode.store(MODE_CONTINUOUS, Ordering::Relaxed);
+        engine.state.burst_size.store(2048, Ordering::Relaxed);
+        engine.start().expect("engine should start");
+        thread::sleep(Duration::from_millis(60));
+        let start = Instant::now();
+        engine.stop();
+        assert!(
+            start.elapsed() < STOP_DEADLINE,
+            "stopping a max-size burst blocked for {:?}",
+            start.elapsed()
+        );
+        engine.stop_and_wait();
     }
 
     #[test]

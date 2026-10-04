@@ -26,7 +26,8 @@ mod imp {
 
     use windows_sys::Win32::Foundation::GetLastError;
     use windows_sys::Win32::System::Threading::{
-        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_TIME_CRITICAL,
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_ABOVE_NORMAL, THREAD_PRIORITY_NORMAL,
+        THREAD_PRIORITY_TIME_CRITICAL,
     };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
@@ -137,9 +138,17 @@ mod imp {
             let priority = if time_critical {
                 THREAD_PRIORITY_TIME_CRITICAL
             } else {
-                THREAD_PRIORITY_HIGHEST
+                THREAD_PRIORITY_ABOVE_NORMAL
             };
             SetThreadPriority(GetCurrentThread(), priority);
+        }
+    }
+
+    /// Drop back to normal. Called when the engine loop exits so a finished run
+    /// cannot keep the machine feeling slow.
+    pub fn reset_thread_priority() {
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
         }
     }
 
@@ -228,12 +237,14 @@ mod imp {
 
     pub fn elevate_thread_priority(_time_critical: bool) {}
 
+    pub fn reset_thread_priority() {}
+
     pub const fn supported() -> bool {
         false
     }
 }
 
-pub use imp::{elevate_thread_priority, supported, InputBatcher};
+pub use imp::{elevate_thread_priority, reset_thread_priority, supported, InputBatcher};
 
 impl fmt::Display for TargetButton {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
